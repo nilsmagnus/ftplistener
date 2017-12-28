@@ -9,7 +9,14 @@ import (
 	"os"
 	"time"
 	"io"
+	"sort"
 )
+
+type ByDate []*ftp.Entry
+
+func (a ByDate) Len() int           { return len(a) }
+func (a ByDate) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByDate) Less(i, j int) bool { return a[i].Time.After(a[j].Time)}
 
 func main() {
 
@@ -36,12 +43,15 @@ func main() {
 		panic(listErr)
 	}
 
+	sort.Sort(ByDate(list))
+
 	gfsFolderName, _ := regexp.Compile("gfs.([0-9]{8})")
 
 	for _, entry := range list {
 		if folderIsRelevant(entry, gfsFolderName) {
 			fmt.Printf("->\thit folder %s\n", entry.Name)
 			if files, err := listFiles(conn, *baseDir, entry.Name); err == nil {
+				sort.Sort(ByDate(files))
 				downloadAll(conn, files, *saveFolder)
 			}
 		}
@@ -92,7 +102,7 @@ func downloadSingle(conn *ftp.ServerConn, entry *ftp.Entry, destinationFolder st
 }
 
 func fileFolder(folderName string, entryTime time.Time) (string) {
-	return fmt.Sprintf("%s/%d%2d%2d%2d/", folderName, entryTime.Year(), entryTime.Month(), entryTime.Day(), entryTime.Hour())
+	return fmt.Sprintf("%s/%d%02d%02d%02d/", folderName, entryTime.Year(), entryTime.Month(), entryTime.Day(), entryTime.Hour())
 }
 func filePath(folderName string, entry *ftp.Entry) string {
 
