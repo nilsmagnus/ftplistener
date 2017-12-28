@@ -10,13 +10,14 @@ import (
 	"time"
 	"io"
 	"sort"
+	"sync"
 )
 
 type ByDate []*ftp.Entry
 
 func (a ByDate) Len() int           { return len(a) }
 func (a ByDate) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByDate) Less(i, j int) bool { return a[i].Time.After(a[j].Time)}
+func (a ByDate) Less(i, j int) bool { return a[i].Time.After(a[j].Time) }
 
 func main() {
 
@@ -31,53 +32,74 @@ func main() {
 
 	host := fmt.Sprintf("%s:%s", *hostName, *port)
 
-	conn, connectErr := connect(host, *user, *password)
+	credentials := map[string]string{
+		"user":     *user,
+		"password": *password,
+		"host":     host,
+	}
+
+	conn, connectErr := connect(credentials)
 
 	if connectErr != nil {
 		panic(connectErr)
 	}
 
-	list, listErr := conn.List(*baseDir)
+	folderList, listErr := conn.List(*baseDir)
 
 	if listErr != nil {
 		panic(listErr)
 	}
 
-	sort.Sort(ByDate(list))
+	sort.Sort(ByDate(folderList))
 
 	gfsFolderName, _ := regexp.Compile("gfs.([0-9]{8})")
 
-	for _, entry := range list {
-		if folderIsRelevant(entry, gfsFolderName) {
-			fmt.Printf("->\thit folder %s\n", entry.Name)
-			if files, err := listFiles(conn, *baseDir, entry.Name); err == nil {
-				sort.Sort(ByDate(files))
-				downloadAll(conn, files, *saveFolder)
+	for _, ftpFolder := range folderList {
+		if folderIsRelevant(ftpFolder, gfsFolderName) {
+			fmt.Printf("->\thit ftpFolder %s\n", ftpFolder.Name)
+			if gribFiles, err := listFiles(credentials, *baseDir, ftpFolder.Name); err == nil {
+				sort.Sort(ByDate(gribFiles))
+				downloadAll(credentials, *baseDir, ftpFolder.Name, gribFiles, *saveFolder)
+			} else {
+				fmt.Printf("Error listing files in folder [%s] \n", ftpFolder.Name)
 			}
 		}
 	}
 
 }
-func downloadAll(conn *ftp.ServerConn, entries []*ftp.Entry, destinationFolder string) {
+func downloadAll(credentials map[string]string, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string) {
+	var wg sync.WaitGroup
 	for _, fileEntry := range entries {
 		stat, err := os.Stat(filePath(destinationFolder, fileEntry))
 
 		if os.IsNotExist(err) { // if file does not exist
-			downloadSingle(conn, fileEntry, destinationFolder)
+			go downloadSingle(credentials, baseDir, subDir, fileEntry, destinationFolder, &wg)
 		} else if stat != nil && stat.Size() != int64(fileEntry.Size) { // if filesize is different from existing file
-			fmt.Printf("Deleting incomplete entry %s\n",  filePath(destinationFolder, fileEntry))
+			fmt.Printf("Deleting incomplete entry %s\n", filePath(destinationFolder, fileEntry))
 			os.Remove(stat.Name())
-			downloadSingle(conn, fileEntry, destinationFolder)
+			go downloadSingle(credentials, baseDir, subDir, fileEntry, destinationFolder, &wg)
 		} else {
 			fmt.Printf("Skipping existing entry %s\n", filePath(destinationFolder, fileEntry))
 		}
 	}
+	wg.Wait()
 }
 
-func downloadSingle(conn *ftp.ServerConn, entry *ftp.Entry, destinationFolder string) error {
+func downloadSingle(credentials map[string]string, baseDir, subDir string, entry *ftp.Entry, destinationFolder string, wg *sync.WaitGroup) error {
+	wg.Add(1)
+	defer wg.Done()
+
 	fmt.Printf("Downloading %s\n", filePath(destinationFolder, entry))
 
 	os.MkdirAll(fileFolder(destinationFolder, entry.Time), 0777)
+
+	conn, err := connect(credentials)
+	if err != nil {
+		return err
+	}
+	defer conn.Logout()
+
+	conn.ChangeDir(baseDir + "/" + subDir)
 
 	response, err := conn.Retr(entry.Name)
 	if err != nil {
@@ -108,14 +130,13 @@ func filePath(folderName string, entry *ftp.Entry) string {
 
 	return fmt.Sprintf("%s%s", fileFolder(folderName, entry.Time), entry.Name)
 }
-func listFiles(conn *ftp.ServerConn, baseDir string, subDir string) ([]*ftp.Entry, error) {
-
-	dirErr := conn.ChangeDir(baseDir + "/" + subDir)
-	if dirErr != nil {
-		return nil, dirErr
+func listFiles(credentials map[string]string, baseDir string, subDir string) ([]*ftp.Entry, error) {
+	conn, conErr := connect(credentials)
+	if conErr != nil {
+		return nil, conErr
 	}
 
-	list, err := conn.List("")
+	list, err := conn.List(baseDir + "/" + subDir)
 
 	if err != nil {
 		return nil, err
@@ -137,12 +158,12 @@ func listFiles(conn *ftp.ServerConn, baseDir string, subDir string) ([]*ftp.Entr
 func folderIsRelevant(l *ftp.Entry, gfsFolderName *regexp.Regexp) bool {
 	return l.Type == ftp.EntryTypeFolder && gfsFolderName.MatchString(l.Name)
 }
-func connect(host, user, password string) (*ftp.ServerConn, error) {
-	conn, err := ftp.Dial(host)
+func connect(credentials map[string]string) (*ftp.ServerConn, error) {
+	conn, err := ftp.Dial(credentials["host"])
 	if err != nil {
 		return nil, err
 	}
-	loginErr := conn.Login(user, password)
+	loginErr := conn.Login(credentials["user"], credentials["password"])
 	if loginErr != nil {
 		return nil, loginErr
 	}
