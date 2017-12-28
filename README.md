@@ -14,7 +14,8 @@ get latest grib2 files from nooa via anonymous ftp (ftp.ncep.noaa.gov)
     
 
 * will get dependencies(ftp-client), build the application and start downloading all current gribfiles from nooa. 
-* checks for duplicates before downloading
+* checks for complete duplicates before downloading
+* deletes existing incomplete downloads
 
 # usage
     Usage of ./ftplistener:
@@ -35,7 +36,7 @@ get latest grib2 files from nooa via anonymous ftp (ftp.ncep.noaa.gov)
 # gotchas
 
 * downloads only 1p00 files, change the source if you need something else
-* will not verify size/checksum of files
+* will only verify size of files, not checksum
 * all files for 1 day is about 4GB in size
 
     
