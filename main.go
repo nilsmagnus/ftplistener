@@ -50,13 +50,23 @@ func main() {
 }
 func downloadAll(conn *ftp.ServerConn, entries []*ftp.Entry, destinationFolder string) {
 	for _, fileEntry := range entries {
-		if _, err := os.Stat(filePath(destinationFolder, fileEntry)); os.IsNotExist(err) {
+		stat, err := os.Stat(filePath(destinationFolder, fileEntry))
+
+		if os.IsNotExist(err) { // if file does not exist
 			downloadSingle(conn, fileEntry, destinationFolder)
+		} else if stat != nil && stat.Size() != int64(fileEntry.Size) { // if filesize is different from existing file
+			fmt.Printf("Deleting incomplete entry %s\n",  filePath(destinationFolder, fileEntry))
+			os.Remove(stat.Name())
+			downloadSingle(conn, fileEntry, destinationFolder)
+		} else {
+			fmt.Printf("Skipping existing entry %s\n", filePath(destinationFolder, fileEntry))
 		}
 	}
 }
 
 func downloadSingle(conn *ftp.ServerConn, entry *ftp.Entry, destinationFolder string) error {
+	fmt.Printf("Downloading %s\n", filePath(destinationFolder, entry))
+
 	os.MkdirAll(fileFolder(destinationFolder, entry.Time), 0777)
 
 	response, err := conn.Retr(entry.Name)
