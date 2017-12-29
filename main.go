@@ -73,10 +73,12 @@ func downloadAll(credentials map[string]string, baseDir, subDir string, entries 
 		stat, err := os.Stat(filePath(destinationFolder, fileEntry))
 
 		if os.IsNotExist(err) { // if file does not exist
+			wg.Add(1)
 			go downloadSingle(credentials, baseDir, subDir, fileEntry, destinationFolder, &wg)
 		} else if stat != nil && stat.Size() != int64(fileEntry.Size) { // if filesize is different from existing file
 			fmt.Printf("Deleting incomplete entry %s\n", filePath(destinationFolder, fileEntry))
 			os.Remove(stat.Name())
+			wg.Add(1)
 			go downloadSingle(credentials, baseDir, subDir, fileEntry, destinationFolder, &wg)
 		} else {
 			fmt.Printf("Skipping existing entry %s\n", filePath(destinationFolder, fileEntry))
@@ -86,7 +88,6 @@ func downloadAll(credentials map[string]string, baseDir, subDir string, entries 
 }
 
 func downloadSingle(credentials map[string]string, baseDir, subDir string, entry *ftp.Entry, destinationFolder string, wg *sync.WaitGroup) error {
-	wg.Add(1)
 	defer wg.Done()
 
 	fmt.Printf("Downloading %s\n", filePath(destinationFolder, entry))
