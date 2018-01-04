@@ -90,7 +90,7 @@ func downloadSingle(credentials map[string]string, baseDir, subDir string, entry
 	defer wg.Done()
 
 	fmt.Printf("Downloading %s\n", filePath(destinationFolder, entry, subDir))
- 
+
 	os.MkdirAll(fileFolder(destinationFolder,  subDir), 0777)
 
 	conn, err := connect(credentials)
