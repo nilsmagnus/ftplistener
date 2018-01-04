@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strings"
 	"os"
-	"time"
 	"io"
 	"sort"
 	"sync"
@@ -70,18 +69,18 @@ func main() {
 func downloadAll(credentials map[string]string, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string) {
 	var wg sync.WaitGroup
 	for _, fileEntry := range entries {
-		stat, err := os.Stat(filePath(destinationFolder, fileEntry))
+		stat, err := os.Stat(filePath(destinationFolder, fileEntry, subDir))
 
 		if os.IsNotExist(err) { // if file does not exist
 			wg.Add(1)
 			go downloadSingle(credentials, baseDir, subDir, fileEntry, destinationFolder, &wg)
 		} else if stat != nil && stat.Size() != int64(fileEntry.Size) { // if filesize is different from existing file
-			fmt.Printf("Deleting incomplete entry %s\n", filePath(destinationFolder, fileEntry))
+			fmt.Printf("Deleting incomplete entry %s\n", filePath(destinationFolder, fileEntry, subDir))
 			os.Remove(stat.Name())
 			wg.Add(1)
 			go downloadSingle(credentials, baseDir, subDir, fileEntry, destinationFolder, &wg)
 		} else {
-			fmt.Printf("Skipping existing entry %s\n", filePath(destinationFolder, fileEntry))
+			fmt.Printf("Skipping existing entry %s\n", filePath(destinationFolder, fileEntry, subDir))
 		}
 	}
 	wg.Wait()
@@ -90,9 +89,9 @@ func downloadAll(credentials map[string]string, baseDir, subDir string, entries 
 func downloadSingle(credentials map[string]string, baseDir, subDir string, entry *ftp.Entry, destinationFolder string, wg *sync.WaitGroup) error {
 	defer wg.Done()
 
-	fmt.Printf("Downloading %s\n", filePath(destinationFolder, entry))
-
-	os.MkdirAll(fileFolder(destinationFolder, entry.Time), 0777)
+	fmt.Printf("Downloading %s\n", filePath(destinationFolder, entry, subDir))
+ 
+	os.MkdirAll(fileFolder(destinationFolder,  subDir), 0777)
 
 	conn, err := connect(credentials)
 	if err != nil {
@@ -108,7 +107,7 @@ func downloadSingle(credentials map[string]string, baseDir, subDir string, entry
 	}
 	defer response.Close()
 
-	fileName := filePath(destinationFolder, entry)
+	fileName := filePath(destinationFolder, entry, subDir)
 
 	file, ferr := os.Create(fileName)
 	if ferr != nil {
@@ -124,13 +123,13 @@ func downloadSingle(credentials map[string]string, baseDir, subDir string, entry
 	return nil
 }
 
-func fileFolder(folderName string, entryTime time.Time) (string) {
-	return fmt.Sprintf("%s/%d%02d%02d%02d/", folderName, entryTime.Year(), entryTime.Month(), entryTime.Day(), entryTime.Hour())
+func fileFolder(folderName , subdir string ) (string) {
+	return fmt.Sprintf("%s/%s/", folderName, subdir)
 }
-func filePath(folderName string, entry *ftp.Entry) string {
+func filePath(folderName string, entry *ftp.Entry, subdir string) string {
+	return fmt.Sprintf("%s%s", fileFolder(folderName, subdir), entry.Name)
+}
 
-	return fmt.Sprintf("%s%s", fileFolder(folderName, entry.Time), entry.Name)
-}
 func listFiles(credentials map[string]string, baseDir string, subDir string) ([]*ftp.Entry, error) {
 	conn, conErr := connect(credentials)
 	if conErr != nil {
