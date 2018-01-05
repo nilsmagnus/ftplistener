@@ -39,4 +39,9 @@ get latest grib2 files from nooa via anonymous ftp (ftp.ncep.noaa.gov)
 * will only verify size of files, not checksum
 * all files for 1 day is about 4GB in size
 
+# docker
+
+Make docker-image:
+
+    make docker
     
