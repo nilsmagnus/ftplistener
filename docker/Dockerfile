@@ -1,5 +1,5 @@
-FROM scratch
-ADD ftplistener /
-ENV GRIBDIR=/tmp/gribfiles
+FROM ubuntu:16.04
+COPY ftplistener ftplistener
+ENV GRIBDIR=/
 
-CMD ["/ftplistener -destination $GRIBDIR"]
+CMD ./ftplistener -destination $GRIBDIR
