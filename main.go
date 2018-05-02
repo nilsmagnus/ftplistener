@@ -11,6 +11,8 @@ import (
 
 	"sync"
 
+	"time"
+
 	"github.com/jlaffaye/ftp"
 )
 
@@ -19,6 +21,10 @@ type ByDate []*ftp.Entry
 func (a ByDate) Len() int           { return len(a) }
 func (a ByDate) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByDate) Less(i, j int) bool { return a[i].Time.After(a[j].Time) }
+
+func (f *ftpEntryForDownload) isEmpty() bool {
+	return f.subDir == "" && f.destinationFolder == "" && f.baseDir == ""
+}
 
 func main() {
 
@@ -58,14 +64,12 @@ func main() {
 	downloadItemChannel := make(chan ftpEntryForDownload, 10)
 
 	go func() {
-		defer close(downloadItemChannel)
-
 		for _, ftpFolder := range folderList {
 			if folderIsRelevant(ftpFolder, gfsFolderName) {
 				fmt.Printf("->\thit ftpFolder %s\n", ftpFolder.Name)
 				if gribFiles, err := listFiles(credentials, *baseDir, ftpFolder.Name); err == nil {
 					sort.Sort(ByDate(gribFiles))
-					downloadAllInFolder(downloadItemChannel, *baseDir, ftpFolder.Name, gribFiles, *saveFolder)
+					go putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, ftpFolder.Name, gribFiles, *saveFolder)
 				} else {
 					fmt.Printf("Error listing files in folder [%s] \n", ftpFolder.Name)
 				}
@@ -74,26 +78,26 @@ func main() {
 	}()
 
 	wg := sync.WaitGroup{}
-	doneChannel := make(chan int, 4)
-outer:
+	doneChannel := make(chan int, 6)
 
-	for {
-
-		select {
-		case entry, ok := <-downloadItemChannel:
-			if !ok {
-				fmt.Println("channel closed")
-				break outer
+	go func() {
+		for {
+			select {
+			case entry := <-downloadItemChannel:
+				wg.Add(1)
+				go downloadSingle(credentials, entry, doneChannel, wg)
 			}
-			fmt.Printf("Got entry on channel %s - %s\n", entry.subDir, entry.entry.Name)
-			go downloadSingle(credentials, entry, doneChannel, wg)
 		}
-	}
 
+	}()
+
+	time.Sleep(45 * time.Second)
+	fmt.Println("wait syncgroup")
 	wg.Wait()
+	fmt.Println("Syncgroup is done.")
 
 }
-func downloadAllInFolder(downloadChannel chan<- ftpEntryForDownload, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string) {
+func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string) {
 	for _, fileEntry := range entries {
 		stat, err := os.Stat(filePath(destinationFolder, fileEntry, subDir))
 
@@ -128,14 +132,13 @@ type ftpEntryForDownload struct {
 
 func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, doneChannel chan int, wg sync.WaitGroup) error {
 	doneChannel <- 0
-	wg.Add(1)
 
 	defer func() {
+		fmt.Printf("\tDone downloading %s\n", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
 		wg.Done()
 		<-doneChannel
 	}()
-	return nil
-	fmt.Printf("Downloading %s\n", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
+	fmt.Printf("Downloading \t%s\n", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
 
 	os.MkdirAll(fileFolder(downloadItem.destinationFolder, downloadItem.subDir), 0777)
 
