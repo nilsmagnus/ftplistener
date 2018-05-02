@@ -11,8 +11,6 @@ import (
 
 	"sync"
 
-	"time"
-
 	"github.com/jlaffaye/ftp"
 )
 
@@ -61,24 +59,10 @@ func main() {
 
 	gfsFolderName, _ := regexp.Compile("gfs.([0-9]{8})")
 
-	downloadItemChannel := make(chan ftpEntryForDownload, 10)
-
-	go func() {
-		for _, ftpFolder := range folderList {
-			if folderIsRelevant(ftpFolder, gfsFolderName) {
-				fmt.Printf("->\thit ftpFolder %s\n", ftpFolder.Name)
-				if gribFiles, err := listFiles(credentials, *baseDir, ftpFolder.Name); err == nil {
-					sort.Sort(ByDate(gribFiles))
-					go putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, ftpFolder.Name, gribFiles, *saveFolder)
-				} else {
-					fmt.Printf("Error listing files in folder [%s] \n", ftpFolder.Name)
-				}
-			}
-		}
-	}()
+	downloadItemChannel := make(chan ftpEntryForDownload, 1000)
 
 	wg := sync.WaitGroup{}
-	doneChannel := make(chan int, 6)
+	doneChannel := make(chan int, 8)
 
 	go func() {
 		for {
@@ -90,8 +74,18 @@ func main() {
 		}
 
 	}()
+	for _, ftpFolder := range folderList {
+		if folderIsRelevant(ftpFolder, gfsFolderName) {
+			fmt.Printf("->\thit ftpFolder %s\n", ftpFolder.Name)
+			if gribFiles, err := listFiles(credentials, *baseDir, ftpFolder.Name); err == nil {
+				sort.Sort(ByDate(gribFiles))
+				putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, ftpFolder.Name, gribFiles, *saveFolder)
+			} else {
+				fmt.Printf("Error listing files in folder [%s] \n", ftpFolder.Name)
+			}
+		}
+	}
 
-	time.Sleep(45 * time.Second)
 	fmt.Println("wait syncgroup")
 	wg.Wait()
 	fmt.Println("Syncgroup is done.")
