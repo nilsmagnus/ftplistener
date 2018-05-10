@@ -62,7 +62,7 @@ func main() {
 	downloadItemChannel := make(chan ftpEntryForDownload, 1000)
 
 	wg := sync.WaitGroup{}
-	doneChannel := make(chan int, 8)
+	doneChannel := make(chan int, 16)
 
 	go func() {
 		for {
