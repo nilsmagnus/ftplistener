@@ -69,7 +69,7 @@ func main() {
 			select {
 			case entry := <-downloadItemChannel:
 				wg.Add(1)
-				go downloadSingle(credentials, entry, doneChannel, wg)
+				go downloadSingle(credentials, entry, doneChannel, &wg)
 			}
 		}
 
@@ -124,7 +124,7 @@ type ftpEntryForDownload struct {
 	destinationFolder string
 }
 
-func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, doneChannel chan int, wg sync.WaitGroup) error {
+func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, doneChannel chan int, wg *sync.WaitGroup) error {
 	doneChannel <- 0
 
 	defer func() {
