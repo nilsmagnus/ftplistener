@@ -62,14 +62,17 @@ func main() {
 	downloadItemChannel := make(chan ftpEntryForDownload, 1000)
 
 	wg := sync.WaitGroup{}
-	doneChannel := make(chan int, 16)
+	maxConcurrentDownloads := make(chan int, 16)
 
 	go func() {
 		for {
 			select {
 			case entry := <-downloadItemChannel:
 				wg.Add(1)
-				go downloadSingle(credentials, entry, doneChannel, &wg)
+				go func() {
+					downloadSingle(credentials, entry, maxConcurrentDownloads)
+					wg.Done()
+				}()
 			}
 		}
 
@@ -124,13 +127,12 @@ type ftpEntryForDownload struct {
 	destinationFolder string
 }
 
-func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, doneChannel chan int, wg *sync.WaitGroup) error {
-	doneChannel <- 0
+func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, maxConcurrentDownloads chan int) error {
+	maxConcurrentDownloads <- 0
 
 	defer func() {
 		fmt.Printf("\tDone downloading %s\n", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
-		wg.Done()
-		<-doneChannel
+		<-maxConcurrentDownloads
 	}()
 	fmt.Printf("Downloading \t%s\n", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
 
