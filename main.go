@@ -8,10 +8,12 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"sync"
 
 	"github.com/jlaffaye/ftp"
+	"go.uber.org/zap"
 )
 
 type ByDate []*ftp.Entry
@@ -25,6 +27,10 @@ func (f *ftpEntryForDownload) isEmpty() bool {
 }
 
 func main() {
+
+	logger, _ := zap.NewProduction()
+	defer logger.Sync() // flushes buffer, if any
+	sugar := logger.Sugar()
 
 	hostName := flag.String("host", "ftp.ncep.noaa.gov", "Ftp host to ftpConnect to")
 	port := flag.String("port", "21", "Ftp port to ftpConnect to")
@@ -70,7 +76,12 @@ func main() {
 			case entry := <-downloadItemChannel:
 				wg.Add(1)
 				go func() {
-					downloadSingle(credentials, entry, maxConcurrentDownloads)
+					err := downloadSingle(credentials, entry, maxConcurrentDownloads, sugar)
+					if err != nil {
+						sugar.Warnf("Failed to download entry", "entry", entry.entry.Name, "date", entry.entry.Time)
+						// TODO log something here
+						downloadItemChannel <- entry
+					}
 					wg.Done()
 				}()
 			}
@@ -79,12 +90,12 @@ func main() {
 	}()
 	for _, ftpFolder := range folderList {
 		if folderIsRelevant(ftpFolder, gfsFolderName) {
-			fmt.Printf("->\thit ftpFolder %s\n", ftpFolder.Name)
+			sugar.Infof("->\thit ftpFolder ", "foldername", ftpFolder.Name)
 			if gribFiles, err := listFiles(credentials, *baseDir, ftpFolder.Name); err == nil {
 				sort.Sort(ByDate(gribFiles))
-				putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, ftpFolder.Name, gribFiles, *saveFolder)
+				putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, ftpFolder.Name, gribFiles, *saveFolder, sugar)
 			} else {
-				fmt.Printf("Error listing files in folder [%s] \n", ftpFolder.Name)
+				sugar.Errorf("Error listing files in folder ", "folder", ftpFolder.Name)
 			}
 		}
 	}
@@ -94,7 +105,7 @@ func main() {
 	fmt.Println("Syncgroup is done.")
 
 }
-func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string) {
+func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string, sugar *zap.SugaredLogger) {
 	for _, fileEntry := range entries {
 		stat, err := os.Stat(filePath(destinationFolder, fileEntry, subDir))
 
@@ -106,7 +117,7 @@ func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, 
 				destinationFolder: destinationFolder,
 			}
 		} else if stat != nil && stat.Size() != int64(fileEntry.Size) { // if filesize is different from existing file
-			fmt.Printf("Deleting incomplete entry %s\n", filePath(destinationFolder, fileEntry, subDir))
+			sugar.Warnf("Deleting incomplete entry ", "entry", filePath(destinationFolder, fileEntry, subDir))
 			os.Remove(stat.Name())
 			downloadChannel <- ftpEntryForDownload{
 				baseDir:           baseDir,
@@ -115,7 +126,7 @@ func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, 
 				destinationFolder: destinationFolder,
 			}
 		} else {
-			fmt.Printf("Skipping existing entry %s\n", filePath(destinationFolder, fileEntry, subDir))
+			sugar.Infof("Skipping existing entry", "entry", filePath(destinationFolder, fileEntry, subDir))
 		}
 	}
 }
@@ -127,14 +138,14 @@ type ftpEntryForDownload struct {
 	destinationFolder string
 }
 
-func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, maxConcurrentDownloads chan int) error {
+func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, maxConcurrentDownloads chan int, sugar *zap.SugaredLogger) error {
 	maxConcurrentDownloads <- 0
 
 	defer func() {
-		fmt.Printf("\tDone downloading %s\n", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
+		sugar.Infof("\tDone downloading ", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
 		<-maxConcurrentDownloads
 	}()
-	fmt.Printf("Downloading \t%s\n", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
+	sugar.Infof("Downloading \t", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
 
 	os.MkdirAll(fileFolder(downloadItem.destinationFolder, downloadItem.subDir), 0777)
 
@@ -204,7 +215,7 @@ func folderIsRelevant(l *ftp.Entry, gfsFolderName *regexp.Regexp) bool {
 	return l.Type == ftp.EntryTypeFolder && gfsFolderName.MatchString(l.Name)
 }
 func ftpConnect(credentials map[string]string) (*ftp.ServerConn, error) {
-	conn, err := ftp.Dial(credentials["host"])
+	conn, err := ftp.DialTimeout(credentials["host"], 15*time.Second)
 	if err != nil {
 		return nil, err
 	}
