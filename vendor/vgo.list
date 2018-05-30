@@ -1,0 +1,7 @@
+MODULE                             VERSION
+github.com/nilsmagnus/ftplistener  -
+github.com/davecgh/go-spew         v1.1.0
+github.com/jlaffaye/ftp            v0.0.0-20180404123514-2403248fa8cc
+github.com/pmezard/go-difflib      v1.0.0
+github.com/stretchr/objx           v0.0.0-20180106011353-facf9a85c22f
+github.com/stretchr/testify        v1.2.1
