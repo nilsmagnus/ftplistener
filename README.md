@@ -3,12 +3,10 @@ get latest grib2 files from nooa via anonymous ftp (ftp.ncep.noaa.gov)
 # prereqs
 
 * go 1.8+ installed
-* dep installed
 
 # build & run
 
 
-    dep ensure
     go build
     ./ftplistener
     
