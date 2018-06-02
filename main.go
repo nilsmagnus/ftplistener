@@ -28,7 +28,7 @@ func (f *ftpEntryForDownload) isEmpty() bool {
 
 func main() {
 
-	logger, _ := zap.NewProduction()
+	logger, _ := zap.NewDevelopment()
 	defer logger.Sync() // flushes buffer, if any
 	sugar := logger.Sugar()
 
@@ -78,7 +78,7 @@ func main() {
 				go func() {
 					err := downloadSingle(credentials, entry, maxConcurrentDownloads, sugar)
 					if err != nil {
-						sugar.Warnf("Failed to download entry", "entry", entry.entry.Name, "date", entry.entry.Time)
+						sugar.Warnw("Failed to download entry", "entry", entry.entry.Name, "date", entry.entry.Time)
 						// TODO log something here
 						downloadItemChannel <- entry
 					}
@@ -90,12 +90,12 @@ func main() {
 	}()
 	for _, ftpFolder := range folderList {
 		if folderIsRelevant(ftpFolder, gfsFolderName) {
-			sugar.Infof("->\thit ftpFolder ", "foldername", ftpFolder.Name)
+			sugar.Infow("hit ftpFolder ", "foldername", ftpFolder.Name)
 			if gribFiles, err := listFiles(credentials, *baseDir, ftpFolder.Name); err == nil {
 				sort.Sort(ByDate(gribFiles))
 				putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, ftpFolder.Name, gribFiles, *saveFolder, sugar)
 			} else {
-				sugar.Errorf("Error listing files in folder ", "folder", ftpFolder.Name)
+				sugar.Errorw("Error listing files in folder ", "folder", ftpFolder.Name)
 			}
 		}
 	}
@@ -117,7 +117,7 @@ func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, 
 				destinationFolder: destinationFolder,
 			}
 		} else if stat != nil && stat.Size() != int64(fileEntry.Size) { // if filesize is different from existing file
-			sugar.Warnf("Deleting incomplete entry ", "entry", filePath(destinationFolder, fileEntry, subDir))
+			sugar.Warnw("Deleting incomplete entry ", "entry", filePath(destinationFolder, fileEntry, subDir))
 			os.Remove(stat.Name())
 			downloadChannel <- ftpEntryForDownload{
 				baseDir:           baseDir,
@@ -126,7 +126,7 @@ func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, 
 				destinationFolder: destinationFolder,
 			}
 		} else {
-			sugar.Infof("Skipping existing entry", "entry", filePath(destinationFolder, fileEntry, subDir))
+			sugar.Infow("Skipping existing entry", "entry", filePath(destinationFolder, fileEntry, subDir))
 		}
 	}
 }
@@ -142,10 +142,10 @@ func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownl
 	maxConcurrentDownloads <- 0
 
 	defer func() {
-		sugar.Infof("\tDone downloading ", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
+		sugar.Infow("Done downloading ", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
 		<-maxConcurrentDownloads
 	}()
-	sugar.Infof("Downloading \t", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
+	sugar.Infow("Downloading ", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
 
 	os.MkdirAll(fileFolder(downloadItem.destinationFolder, downloadItem.subDir), 0777)
 
