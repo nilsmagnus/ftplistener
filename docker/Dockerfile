@@ -1,4 +1,4 @@
-FROM ubuntu:16.04
+FROM alpine:3.7
 COPY ftplistener ftplistener
 ENV GRIBDIR=/data/gribfiles
 
