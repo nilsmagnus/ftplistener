@@ -42,4 +42,6 @@ get latest grib2 files from nooa via anonymous ftp (ftp.ncep.noaa.gov)
 Make docker-image:
 
     make docker
+
+mount a dir to /data/gribfiles if you want to keep your data
     

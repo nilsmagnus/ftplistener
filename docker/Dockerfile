@@ -1,5 +1,9 @@
 FROM alpine:3.7
-COPY ftplistener ftplistener
+
+RUN apk add --no-cache bash
+
+COPY ftplistener /ftplistener
+
 ENV GRIBDIR=/data/gribfiles
 
 CMD ./ftplistener -destination $GRIBDIR
