@@ -14,6 +14,7 @@ import (
 
 	"github.com/jlaffaye/ftp"
 	"go.uber.org/zap"
+	nats "github.com/nats-io/go-nats-streaming"
 )
 
 type ByDate []*ftp.Entry
@@ -70,16 +71,21 @@ func main() {
 	wg := sync.WaitGroup{}
 	maxConcurrentDownloads := make(chan int, 16)
 
+	onDone, sc := postToNatsFunc("nats://pi.hole:4222", sugar)
+
+	if sc != nil {
+		defer sc.Close()
+	}
+
 	go func() {
 		for {
 			select {
 			case entry := <-downloadItemChannel:
 				wg.Add(1)
 				go func() {
-					err := downloadSingle(credentials, entry, maxConcurrentDownloads, sugar)
+					err := downloadSingle(credentials, entry, maxConcurrentDownloads, sugar, onDone)
 					if err != nil {
 						sugar.Warnw("Failed to download entry", "entry", entry.entry.Name, "date", entry.entry.Time)
-						// TODO log something here
 						downloadItemChannel <- entry
 					}
 					wg.Done()
@@ -138,11 +144,13 @@ type ftpEntryForDownload struct {
 	destinationFolder string
 }
 
-func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, maxConcurrentDownloads chan int, sugar *zap.SugaredLogger) error {
+func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, maxConcurrentDownloads chan int, sugar *zap.SugaredLogger, onDone func(filename string)) error {
 	maxConcurrentDownloads <- 0
 
 	defer func() {
-		sugar.Infow("Done downloading ", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
+		filename:= filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir)
+		onDone(filename)
+		sugar.Infow("Done downloading ", "file", filename)
 		<-maxConcurrentDownloads
 	}()
 	sugar.Infow("Downloading ", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
@@ -224,4 +232,23 @@ func ftpConnect(credentials map[string]string) (*ftp.ServerConn, error) {
 		return nil, loginErr
 	}
 	return conn, nil
+}
+
+func postToNatsFunc(natsUrl string, logger *zap.SugaredLogger) (func(filename string), nats.Conn) {
+	sc, connectError := nats.Connect("test-cluster", "ftplistener", nats.NatsURL(natsUrl))
+
+	if connectError != nil {
+		logger.Error("Nats unavailable", connectError)
+		return func(name string) {
+			logger.Info("Error connecting to nats, ", connectError, " not publishing events", name)
+		}, nil
+	}
+
+	logger.Info("Connected to nats on ", natsUrl)
+
+	return func(name string) {
+		if publishError := sc.Publish("leia.noaa.files", []byte(name)); publishError != nil {
+			logger.Error(publishError)
+		}
+	}, sc
 }
