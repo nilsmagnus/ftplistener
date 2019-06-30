@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"regexp"
 	"sort"
@@ -13,8 +14,8 @@ import (
 	"sync"
 
 	"github.com/jlaffaye/ftp"
-	"go.uber.org/zap"
 	nats "github.com/nats-io/go-nats-streaming"
+	"go.uber.org/zap"
 )
 
 type ByDate []*ftp.Entry
@@ -35,7 +36,7 @@ func main() {
 
 	hostName := flag.String("host", "ftp.ncep.noaa.gov", "Ftp host to ftpConnect to")
 	port := flag.String("port", "21", "Ftp port to ftpConnect to")
-	baseDir := flag.String("baseDir", "/pub/data/nccf/com/gfs/prod", "Base dir")
+	baseDir := flag.String("baseDir", "/pub/data/nccf/com/gfs/prod/", "Base dir")
 	user := flag.String("user", "anonymous", "ftp user")
 	password := flag.String("password", "anything", "ftp password")
 	saveFolder := flag.String("destination", "gribfiles", "destination for downloaded files")
@@ -55,12 +56,14 @@ func main() {
 	if connectErr != nil {
 		panic(connectErr)
 	}
-
+	//
 	folderList, listErr := conn.List(*baseDir)
 
 	if listErr != nil {
 		panic(listErr)
 	}
+
+	log.Printf("got %d folders from basedir %s\n", len(folderList), *baseDir)
 
 	sort.Sort(ByDate(folderList))
 
@@ -85,7 +88,7 @@ func main() {
 				go func() {
 					err := downloadSingle(credentials, entry, maxConcurrentDownloads, sugar, onDone)
 					if err != nil {
-						sugar.Warnw("Failed to download entry", "entry", entry.entry.Name, "date", entry.entry.Time)
+						sugar.Warnw("Failed to download entry", "entry", entry.entry.Name, "date", entry.entry.Time, "error", err.Error())
 						downloadItemChannel <- entry
 					}
 					wg.Done()
@@ -97,12 +100,19 @@ func main() {
 	for _, ftpFolder := range folderList {
 		if folderIsRelevant(ftpFolder, gfsFolderName) {
 			sugar.Infow("hit ftpFolder ", "foldername", ftpFolder.Name)
-			if gribFiles, err := listFiles(credentials, *baseDir, ftpFolder.Name); err == nil {
-				sort.Sort(ByDate(gribFiles))
-				putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, ftpFolder.Name, gribFiles, *saveFolder, sugar)
-			} else {
-				sugar.Errorw("Error listing files in folder ", "folder", ftpFolder.Name)
+			for _, subFolderName := range []string{"00", "06", "12", "18"} {
+				aboluteFolder := fmt.Sprintf("%s/%s", ftpFolder.Name, subFolderName)
+				if gribFiles, err := listFiles(credentials, *baseDir, aboluteFolder); err == nil {
+					sort.Sort(ByDate(gribFiles))
+					log.Printf("Found %d files in subfolder %s/%s\n", len(gribFiles), aboluteFolder)
+					putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, aboluteFolder, gribFiles, *saveFolder, sugar)
+				} else {
+					sugar.Errorw("Error listing files in folder ", "folder", ftpFolder.Name)
+				}
+
 			}
+		} else {
+			//	log.Printf("folder is not relevant: %v\n", ftpFolder.Name)
 		}
 	}
 
@@ -111,6 +121,7 @@ func main() {
 	fmt.Println("Syncgroup is done.")
 
 }
+
 func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string, sugar *zap.SugaredLogger) {
 	for _, fileEntry := range entries {
 		stat, err := os.Stat(filePath(destinationFolder, fileEntry, subDir))
@@ -148,7 +159,7 @@ func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownl
 	maxConcurrentDownloads <- 0
 
 	defer func() {
-		filename:= filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir)
+		filename := filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir)
 		onDone(filename)
 		sugar.Infow("Done downloading ", "file", filename)
 		<-maxConcurrentDownloads
