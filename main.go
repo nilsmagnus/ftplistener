@@ -15,7 +15,6 @@ import (
 
 	"github.com/jlaffaye/ftp"
 	nats "github.com/nats-io/go-nats-streaming"
-	"go.uber.org/zap"
 )
 
 type ByDate []*ftp.Entry
@@ -29,10 +28,6 @@ func (f *ftpEntryForDownload) isEmpty() bool {
 }
 
 func main() {
-
-	logger, _ := zap.NewDevelopment()
-	defer logger.Sync() // flushes buffer, if any
-	sugar := logger.Sugar()
 
 	hostName := flag.String("host", "ftp.ncep.noaa.gov", "Ftp host to ftpConnect to")
 	port := flag.String("port", "21", "Ftp port to ftpConnect to")
@@ -74,7 +69,7 @@ func main() {
 	wg := sync.WaitGroup{}
 	maxConcurrentDownloads := make(chan int, 16)
 
-	onDone, sc := postToNatsFunc("nats://pi.hole:4222", sugar)
+	onDone, sc := postToNatsFunc("nats://pi.hole:4222")
 
 	if sc != nil {
 		defer sc.Close()
@@ -86,9 +81,9 @@ func main() {
 			case entry := <-downloadItemChannel:
 				wg.Add(1)
 				go func() {
-					err := downloadSingle(credentials, entry, maxConcurrentDownloads, sugar, onDone)
+					err := downloadSingle(credentials, entry, maxConcurrentDownloads, onDone)
 					if err != nil {
-						sugar.Warnw("Failed to download entry", "entry", entry.entry.Name, "date", entry.entry.Time, "error", err.Error())
+						log.Println("Failed to download entry", "entry", entry.entry.Name, "date", entry.entry.Time, "error", err.Error())
 						downloadItemChannel <- entry
 					}
 					wg.Done()
@@ -99,15 +94,15 @@ func main() {
 	}()
 	for _, ftpFolder := range folderList {
 		if folderIsRelevant(ftpFolder, gfsFolderName) {
-			sugar.Infow("hit ftpFolder ", "foldername", ftpFolder.Name)
+			log.Println("hit ftpFolder ", "foldername", ftpFolder.Name)
 			for _, subFolderName := range []string{"00", "06", "12", "18"} {
 				aboluteFolder := fmt.Sprintf("%s/%s", ftpFolder.Name, subFolderName)
 				if gribFiles, err := listFiles(credentials, *baseDir, aboluteFolder); err == nil {
 					sort.Sort(ByDate(gribFiles))
-					log.Printf("Found %d files in subfolder %s/%s\n", len(gribFiles), aboluteFolder)
-					putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, aboluteFolder, gribFiles, *saveFolder, sugar)
+					log.Printf("Found %d files in subfolder %s\n", len(gribFiles), aboluteFolder)
+					putAllEntriesInFolderOnChannel(downloadItemChannel, *baseDir, aboluteFolder, gribFiles, *saveFolder)
 				} else {
-					sugar.Errorw("Error listing files in folder ", "folder", ftpFolder.Name)
+					log.Println("Error listing files in folder ", "folder", ftpFolder.Name)
 				}
 
 			}
@@ -122,7 +117,7 @@ func main() {
 
 }
 
-func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string, sugar *zap.SugaredLogger) {
+func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, baseDir, subDir string, entries []*ftp.Entry, destinationFolder string) {
 	for _, fileEntry := range entries {
 		stat, err := os.Stat(filePath(destinationFolder, fileEntry, subDir))
 
@@ -134,7 +129,7 @@ func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, 
 				destinationFolder: destinationFolder,
 			}
 		} else if stat != nil && stat.Size() != int64(fileEntry.Size) { // if filesize is different from existing file
-			sugar.Warnw("Deleting incomplete entry ", "entry", filePath(destinationFolder, fileEntry, subDir))
+			log.Println("Deleting incomplete entry ", "entry", filePath(destinationFolder, fileEntry, subDir))
 			os.Remove(stat.Name())
 			downloadChannel <- ftpEntryForDownload{
 				baseDir:           baseDir,
@@ -143,7 +138,7 @@ func putAllEntriesInFolderOnChannel(downloadChannel chan<- ftpEntryForDownload, 
 				destinationFolder: destinationFolder,
 			}
 		} else {
-			sugar.Infow("Skipping existing entry", "entry", filePath(destinationFolder, fileEntry, subDir))
+			log.Println("Skipping existing entry", "entry", filePath(destinationFolder, fileEntry, subDir))
 		}
 	}
 }
@@ -155,16 +150,16 @@ type ftpEntryForDownload struct {
 	destinationFolder string
 }
 
-func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, maxConcurrentDownloads chan int, sugar *zap.SugaredLogger, onDone func(filename string)) error {
+func downloadSingle(credentials map[string]string, downloadItem ftpEntryForDownload, maxConcurrentDownloads chan int, onDone func(filename string)) error {
 	maxConcurrentDownloads <- 0
 
 	defer func() {
 		filename := filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir)
 		onDone(filename)
-		sugar.Infow("Done downloading ", "file", filename)
+		log.Println("Done downloading ", "file", filename)
 		<-maxConcurrentDownloads
 	}()
-	sugar.Infow("Downloading ", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
+	log.Println("Downloading ", "file", filePath(downloadItem.destinationFolder, downloadItem.entry, downloadItem.subDir))
 
 	os.MkdirAll(fileFolder(downloadItem.destinationFolder, downloadItem.subDir), 0777)
 
@@ -217,11 +212,13 @@ func listFiles(credentials map[string]string, baseDir string, subDir string) ([]
 		return nil, err
 	}
 
-	gfsFileName, _ := regexp.Compile("gfs.t([0-9]{2})z.pgrb2.1p00.f([0-9]{3})") // TODO parameterize this pattern?
+	gfsFileName, _ := regexp.Compile("gfs.t([0-9]{2})z.pgrb2.1p00.f([0-9]{3})")
 
 	relevantList := make([]*ftp.Entry, 0)
 	for _, e := range list {
-		if e.Type == ftp.EntryTypeFile && gfsFileName.MatchString(e.Name) && !strings.Contains(e.Name, "idx") {
+		if e.Type == ftp.EntryTypeFile &&
+			gfsFileName.MatchString(e.Name) &&
+			!strings.Contains(e.Name, "idx") {
 			relevantList = append(relevantList, e)
 		}
 	}
@@ -245,21 +242,21 @@ func ftpConnect(credentials map[string]string) (*ftp.ServerConn, error) {
 	return conn, nil
 }
 
-func postToNatsFunc(natsUrl string, logger *zap.SugaredLogger) (func(filename string), nats.Conn) {
+func postToNatsFunc(natsUrl string) (func(filename string), nats.Conn) {
 	sc, connectError := nats.Connect("test-cluster", "ftplistener", nats.NatsURL(natsUrl))
 
 	if connectError != nil {
-		logger.Error("Nats unavailable", connectError)
+		log.Println("Nats unavailable", connectError.Error())
 		return func(name string) {
-			logger.Info("Error connecting to nats, ", connectError, " not publishing events", name)
+			log.Println("Error connecting to nats, ", connectError.Error(), " not publishing events", name)
 		}, nil
 	}
 
-	logger.Info("Connected to nats on ", natsUrl)
+	log.Println("Connected to nats on ", natsUrl)
 
 	return func(name string) {
 		if publishError := sc.Publish("leia.noaa.files", []byte(name)); publishError != nil {
-			logger.Error(publishError)
+			log.Println(publishError.Error())
 		}
 	}, sc
 }
